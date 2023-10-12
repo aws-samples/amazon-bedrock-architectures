@@ -1,0 +1,3 @@
+{
+    "text": "From: john.wick@tsa.com\nTo: bobby@gmail.com\nSubject: TSA Pre-Check Application Information\n\nBody:\n\nDear Bobby,\n\nI am writing to inform you that you have been approved for TSA pre-check. See below for the details of your enrollment.\n\nNew KTN number: TSA01234\nSocialSecurity number: 012-34-5678\nConfirmation number: 1975624A123\n\nBest,\nOfficer John Wick"
+}

@@ -1,0 +1,16 @@
+From: john.wick@tsa.com
+To: bobby@gmail.com
+Subject: TSA Pre-Check Application Information
+
+Body:
+
+Dear Bobby,
+
+I am writing to inform you that you have been approved for TSA pre-check. See below for the details of your enrollment.
+
+New KTN number: TSA01234
+Social Security number: 012-34-5678
+Confirmation number: 1975624A123
+
+Best,
+Officer John Wick

@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: PII Masking Workflow
+Parameters:
+  BucketName:
+    Type: String
+
+Resources:
+  ## S3 bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+
+  ## Lambda function
+  PIIMaskingFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: lambda/
+      Handler: lambda.lambda_handler
+      Runtime: python3.9
+      Timeout: 120
+      MemorySize: 512
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref BucketName
+        - Statement:
+          - Sid: BedrockInvokePolicy
+            Effect: Allow
+            Action: 
+              - bedrock:InvokeModel
+            Resource: '*'
+        - TextractDetectAnalyzePolicy: {}
+      Events:
+        FileUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref S3Bucket
+            Events: s3:ObjectCreated:*
+            Filter: 
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'documents/'
+
+Outputs:
+  S3Bucket:
+    Description: S3 bucket containing original documents and masked documents
+    Value: !Ref BucketName
