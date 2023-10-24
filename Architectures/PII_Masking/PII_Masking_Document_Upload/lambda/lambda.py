@@ -1,7 +1,7 @@
 # Lambda function that reads data from S3 PutObject event and calls Amazon Bedrock to return verion of document with masked PII
 import json
 import boto3
-from langchain import PromptTemplate
+from langchain.prompts import PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tiktoken
 import logging
@@ -47,7 +47,7 @@ Assistant:"""
 )
 
 def chunk_text(text, chunk_size):
-  return RecursiveCharacterTextSplitter(chunk_size=chunk_size).split_text(text)
+  return RecursiveCharacterTextSplitter(separators=["\n\n", "\n"], chunk_size=chunk_size, chunk_overlap=0).split_text(text)
 
 def get_prompt(input_text):
   prompt =_PROMPT_TEMPLATE.format(inputDocument=input_text)
@@ -112,7 +112,7 @@ def lambda_handler(event, context):
 
   # if number of estimated chunks is greater than 1, split text and call Amazon Bedrock for each chunk, and concatenate results into a singe text file with the same name as the original S3 object
   if estimated_chunks > 1:
-    chunks = chunk_text(body)
+    chunks = chunk_text(body, _CHUNK_SIZE)
     result = ''
     for chunk in chunks:
       prompt = get_prompt(chunk)

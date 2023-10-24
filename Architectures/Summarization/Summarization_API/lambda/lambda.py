@@ -1,57 +1,26 @@
-# Summarization (Document Upload)
+import json
+import logging
+import boto3
+from langchain.prompts import PromptTemplate
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.llms.bedrock import Bedrock
+from langchain.chains.summarize import load_summarize_chain
+from langchain.chains.llm import LLMChain
+from langchain.chains.combine_documents.stuff import StuffDocumentsChain
+import tiktoken
 
-This repository implements a summarization workflow. The workflow starts when a user uploads a new document. It then processes that document to produce a summary of less than 300 words. This is an asynchronous operation meant for applications that are not latency-sensitive and involve documents. For a synchronous API offering, see the Summarization_API folder in this repo.
-
-## Architecture
-![Summarization Document Upload Workflow](images/Architecture.png)
-
-In order to handle large amounts of input text, we check whether or not the input text can fit into the model's context window. If the input text will not fit, we use the LangChain ```map_reduce``` chain type to create summaries of individual chunks of text, followed by a final summary. The image below was taken from the [LangChain summarization documentation](https://python.langchain.com/docs/use_cases/summarization) and provides a good visual of how we handle inputs of different sizes.
-
-![Summary Map Reduce](images/Summary_Map_Reduce.png)
-
-## Prerequisites
-- [Access to Bedrock models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) 
-  - For this project, you will specifically need access to the Claude2 model in your Region
-- [IAM permissions to launch SAM stack](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-template.html) 
-  - You will need permission to create CloudFormation stacks as well as to create all of the resources defined in the stack 
-- [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)
-
-## Deployment
-
-To deploy the summarization stack, run the below commands. You will need to specify a name for a new S3 bucket that gets created as part of this stack. 
-
-```
-sam build -t template.yaml
-sam deploy --stack-name summarization-doc-upload-stack --capabilities CAPABILITY_IAM --resolve-s3 --parameter-overrides BucketName=<new S3 bucket name>
-```
-
-To get started creating summaries of your documents, upload a document to the S3 bucket you specified in the ```sam deploy``` command for the ```BucketName``` parameter. You will need to add the documents under the ```documents/``` prefix. If you are using the console, you will need to first create the ```documents/``` folder in the S3 bucket and then upload your documents to that folder. This project will not take any actions on objects not added to the ```documents/``` folder.
-
-This project currently supports single-page PDFs, PNG, or JPEG. For multi-page PDFs, you will need to extend the solution to use the asynchronous start_document_text_detection Textract API. Note that PDF documents will be converted to .txt files automatically.
-
-Also note that we are not logging or storing the prompts or completions. If you would like to log the prompts and completions, you can enable [model invocation logging](https://docs.aws.amazon.com/bedrock/latest/userguide/settings.html) for Amazon Bedrock.
-
-## Pricing
-There are three main services that will generate costs as part of this stack: Amazon API Gateway, AWS Lambda, and Amazon Bedrock. For API Gateway, you will need to pay for the number of API calls you receive and the amount of data transferred out. See the [API Gateway pricing page](https://aws.amazon.com/api-gateway/pricing/) for more details. For Lambda pricing, refer to the [Lambda pricing page](https://aws.amazon.com/lambda/pricing/). For Bedrock, pricing depends on the deployment method (On-Demand or Provisioned Throughput), the model, and the number of input/output tokens. For example, the price of performing summarization on the moon_landing.txt payload in the test_requests folder of this repo with the On-Demand pricing model and the Claude 2 model can be estimated:
-
-```
-~16500 input tokens => $0.182
-~250 output tokens => $0.008
-Total = $0.19
-```
-
-See the [Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/) for more details.
-
-## LLM Prompting
-For this project, we use the Claude 2 model from Anthropic. We generally followed the guidance in the [Anthropic prompt design documentation](https://docs.anthropic.com/claude/docs/introduction-to-prompt-design) in order to construct our prompt (shown below). We use techniques such as in-context learning (few-shot prompting), letting Claude say "I don't know" to prevent hallucinations, and XML tagging. For few-shot prompting, we included an example summary of a post-game interview transcript with Notre Dame quarterback Sam Harman from October 14th, 2023.
-```
-
-Human: Given a set of summaries, we want to distill them into a final, consolidated summary of the main themes.
-
-Write your summary within <summary></summary> tags.
-
-Here is an example:
-<example>
+bedrock = boto3.client('bedrock-runtime')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+_MODEL_ID = 'anthropic.claude-v2'
+_TIKTOKEN_ENCODING = 'p50k_base' # we use a BPE tokenizer to estimate number of tokens in input (required since we do not have direct access to model's tokenizer)
+tokenizer = tiktoken.get_encoding(_TIKTOKEN_ENCODING)
+_PROMPT_TOKENS = 500 # overestimation of number of tokens in prompt (not including input document)
+_CONTEXT_WINDOW = 100000 # for Claude v2 100k
+_OUTPUT_TOKEN_BUFFER = 100 # buffer for the max_tokens_to_sample to prevent output from being cut off
+_MAX_SUMMARY_LENGTH = 300
+_MAX_INPUT_SIZE = _CONTEXT_WINDOW - _PROMPT_TOKENS - _MAX_SUMMARY_LENGTH - _OUTPUT_TOKEN_BUFFER
+_EXAMPLE_TEXT = """
 H: <text>
 Q. Sam, you have been through games like Louisville last week, but was it any different here to come back from the adversity with USC coming in, and just how did you sort of manage that over the last seven days?
 SAM HARTMAN: Yeah, they're wild out there. It's awesome. I think it's like what Coach Freeman just said, we are a reflection of our head coach. It's been a bumpy season. You know, you start hot and you lose a close one to Ohio State, and so it's one of those things where, like you said, being in those situations before prepares you for the ridicule, the feeling, the pit in your stomach.
@@ -87,6 +56,40 @@ I know the magnitude. I'll be training in California for the pro stuff and I'll 
 A: <summary>
 Quarterback Sam Hartman discussed Notre Dame's comeback win against USC. He said the adversity after losing to Louisville challenged the team, but coach Marcus Freeman's leadership guided them through. Hartman said the team had a \"special week\" preparing for USC, one of the best offenses in the country. He credited the historic defensive performance that shut down USC. Offensively, Hartman discussed the importance of scoring a touchdown on the first drive to build confidence. He praised receiver Chris Tyree for his persistence and growth this season despite struggles. Their connection on a touchdown pass exemplified Tyree's hard work. Hartman also credited the offensive line for bouncing back after a rough game against Louisville. He said the culture and leadership of players like center Zeke Correll set the tone in practice to be ready for USC. Personally, Hartman called the USC win a special moment in his career that he'll cherish. He said the fan support and football culture at Notre Dame are incredible. Beating a storied rival like USC will stay with him forever.
 </summary>
+"""
+_MAP_PROMPT_TEMPLATE = PromptTemplate(
+  input_variables=["text", "example"],
+  template="""
+
+Human: Given some text, we want to distill the text into a summary of the main themes.
+
+Write your summary within <summary></summary> tags.
+
+Here is an example:
+<example>
+{example}
+</example>
+
+Here is the text, inside  <text></text> XML tags.
+<text>
+{text}
+</text>
+
+Write a concise summary of the above text.
+
+Assistant:"""
+)
+_COMBINE_PROMPT_TEMPLATE = PromptTemplate(
+  input_variables=["text", "example"],
+  template="""
+
+Human: Given a set of summaries, we want to distill them into a final, consolidated summary of the main themes.
+
+Write your summary within <summary></summary> tags.
+
+Here is an example:
+<example>
+{example}
 </example>
 
 Here is the text, inside <text></text> XML tags.
@@ -97,18 +100,97 @@ Here is the text, inside <text></text> XML tags.
 
 Write a <300 word concise summary of the above text within <summary></summary> tags.
 
-Assistant:
-```
+Assistant:"""
+)
+_STUFF_PROMPT_TEMPLATE = PromptTemplate(
+  input_variables=["text", "example"],
+  template="""
 
-Our prompt is meant to just get you started and can almost certainly be improved. Adding additional/better examples to the prompt may help improve the model's accuracy. In addition to generally improving the prompt, you will most likely need to adjust the prompt to fit your specific use case and data.
+Human: Given some text, we want to create a concise summary of the main themes.
 
-As with any project involving language models, this process is not perfect. There is still a chance that the summary is not entirely accurate. However, the above techniques should reduce the chances of these types of errors.
+Write your summary within <summary></summary> tags.
 
-The prompt above is used in the ```lambda/lambda.py``` file of this project. Edit this file and redeploy the stack to iterate on the prompt.
+Here is an example:
+<example>
+{example}
+</example>
 
-## Clean Up
-To delete the stack, empty the S3 bucket that you specified in the ```sam deploy``` command for the ```BucketName``` parameter. Then, you can either delete the stack in AWS CloudFormation or run the below command:
-```
-sam delete --stack-name summarization-doc-upload-stack
-```
-You will need to follow the on-screen prompts to confirm the delete operation.
+Here is the text, inside <text></text> XML tags.
+<text>
+{text}
+</text>
+
+Write a <300 word concise summary of the above text within <summary></summary> tags.
+
+Assistant:"""
+)
+
+def chunk_text(text, chunk_size):
+  return RecursiveCharacterTextSplitter(separators=["\n\n", "\n"], chunk_size=chunk_size, chunk_overlap=int(chunk_size / 100)).create_documents([text])
+
+def estimate_num_chunks(text):
+  estimated_tokens = len(tokenizer.encode(text))
+  return (estimated_tokens // _MAX_INPUT_SIZE) + 1
+
+def process_llm_output(text_output):
+  # strip off XML response tags
+  text_output = text_output.replace('<summary>', '')
+  text_output = text_output.replace('</summary>', '')
+  return text_output
+
+def get_summary_short_doc(text_chunks, output_size):
+  llm = Bedrock(
+    model_id = _MODEL_ID,
+    model_kwargs = {
+      "max_tokens_to_sample": output_size  
+    }
+  )
+  llm_chain = LLMChain(llm=llm, prompt=_STUFF_PROMPT_TEMPLATE)
+  # Define StuffDocumentsChain
+  stuff_chain = StuffDocumentsChain(
+      llm_chain=llm_chain, document_variable_name="text", verbose = True
+  )
+  result = stuff_chain.run(input_documents = text_chunks, example = _EXAMPLE_TEXT)
+  return process_llm_output(result)
+
+def get_summary_large_doc(text_chunks, output_size):
+  llm = Bedrock(
+    model_id = _MODEL_ID,
+    model_kwargs = {
+      "max_tokens_to_sample": output_size  
+    }
+  )
+  summary_chain = load_summarize_chain(
+    llm=llm, 
+    chain_type="map_reduce", 
+    map_prompt=_MAP_PROMPT_TEMPLATE,
+    combine_prompt=_COMBINE_PROMPT_TEMPLATE,
+    verbose = True
+  )
+  result = summary_chain.run(input_documents = text_chunks, example = _EXAMPLE_TEXT)
+  return process_llm_output(result)
+
+# this Lambda function is invoked through API Gateway
+def lambda_handler(event, context):
+  # read API body, if it exists
+  if event.get('body'):
+    body = json.loads(event['body'])['text']
+  else:
+    return {
+      'statusCode': 400,
+      'body': json.dumps('Missing body')
+    }
+
+  chunks = chunk_text(body, _MAX_INPUT_SIZE)
+  logger.info('Estimated chunks: %s', str(len(chunks)))
+
+  if len(chunks) > 1:
+    result = get_summary_large_doc(chunks, _MAX_SUMMARY_LENGTH + _OUTPUT_TOKEN_BUFFER)
+  else: 
+    result = get_summary_short_doc(chunks, _MAX_SUMMARY_LENGTH + _OUTPUT_TOKEN_BUFFER)
+
+  # return success 
+  return {
+    'statusCode': 200,
+    'body': json.dumps({'summary': result})
+  }

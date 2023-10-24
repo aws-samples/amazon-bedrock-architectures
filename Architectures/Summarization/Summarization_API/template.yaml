@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Summarization API
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+
+
+Resources:
+  # API Gateway REST API
+  SummaryAPI:
+    Type: AWS::Serverless::Api
+    Name: SummaryAPI
+    Properties:
+      StageName: !Ref StageName
+      EndpointConfiguration: 
+        Type: REGIONAL
+  
+  # Lambda function
+  SummaryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /
+            Method: get
+            RestApiId: !Ref SummaryAPI
+      CodeUri: lambda/
+      Handler: lambda.lambda_handler
+      Runtime: python3.9
+      Timeout: 120
+      MemorySize: 512
+      Policies:
+        - Statement:
+          - Sid: BedrockInvokePolicy
+            Effect: Allow
+            Action: 
+              - bedrock:InvokeModel
+            Resource: '*'
+
+Outputs:
+  ApiEndpoint:
+    Description: The default endpoint for the API
+    Value: !Sub 'https://${SummaryAPI}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/'
