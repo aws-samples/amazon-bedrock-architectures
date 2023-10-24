@@ -47,7 +47,7 @@ Assistant:"""
 )
 
 def chunk_text(text, chunk_size):
-  return RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=0).split_text(text)
+  return RecursiveCharacterTextSplitter(separators=["\n\n", "\n"], chunk_size=chunk_size, chunk_overlap=0).split_text(text)
 
 def get_prompt(input_text):
   prompt =_PROMPT_TEMPLATE.format(inputDocument=input_text)
