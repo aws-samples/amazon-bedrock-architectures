@@ -8,6 +8,7 @@ This repository implements a summarization workflow. The workflow starts when a 
 In order to handle large amounts of input text, we check whether or not the input text can fit into the model's context window. If the input text will not fit, we use the LangChain ```map_reduce``` chain type to create summaries of individual chunks of text, followed by a final summary. The image below was taken from the [LangChain summarization documentation](https://python.langchain.com/docs/use_cases/summarization) and provides a good visual of how we handle inputs of different sizes.
 
 ![Summary Map Reduce](images/Summary_Map_Reduce.png)
+[License](https://github.com/langchain-ai/langchain/blob/master/LICENSE)
 
 ## Prerequisites
 - [Access to Bedrock models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) 
